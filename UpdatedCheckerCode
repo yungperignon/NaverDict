@@ -1,0 +1,262 @@
+# -*- encoding: utf-8 -*-
+
+import urllib2
+from bs4 import BeautifulSoup
+import sys
+import os
+import pandas as pd
+
+fileAddress = 'C:/Users/USER/Documents/All Work/New Words'
+fileName = ''
+def search(searchWord, definitionToMatch):
+    classNum = -sys.maxint - 1
+    currMatchNum = -sys.maxint - 1
+    checkBool = None
+    termToInput = None
+    defToInput = None
+    ###Word Prep####
+    wordIsAcronym = searchWord.isupper()
+    if wordIsAcronym:
+        noSSearchWord = searchWord.replace(" ","")
+        searchParts = None
+    else:
+        lSearchWord = searchWord.lower()
+        noHSearchWord = lSearchWord.replace("-", " ")
+        noHSSearchWord = noHSearchWord.replace(" ","")
+        searchParts = lSearchWord.split(" ")
+    ##Getting ready for webscraping
+    wordToSearchURL = searchWord.replace(" ", "%20")
+    quote_page = "".join(['https://endic.naver.com/search.nhn?sLn=en&searchOption=entry_idiom&query=', wordToSearchURL])
+    searchPageCount = 1
+    current_page_num = 1
+    ##Start Webscraping
+    print quote_page
+    while(current_page_num <= searchPageCount):
+        if current_page_num > 1:
+            quote_page = "".join([quote_page, '&theme=&pageNo=', str(current_page_num)])
+        try:
+            page = urllib2.urlopen(quote_page)
+            page_decoded = page.read().decode('utf-8', 'ignore')
+            soup = BeautifulSoup(page_decoded, 'html.parser')
+            listToLookAt = soup.find_all("dl", class_ = "list_e2 mar_left")
+            if len(listToLookAt) == 0:#No Search Results
+                return 0, False, None, None
+            if current_page_num == 1:
+                pagesDiv = soup.find_all("div", class_ = "sp_paging")
+                pagesString = pagesDiv[0].stripped_strings
+                searchPageCount = 0
+                for item in pagesString:
+                    searchPageCount += 1
+                if searchPageCount > 5:
+                    searchPageCount = 5
+            dTerms = listToLookAt[0].find_all("span", class_="fnt_e30")
+            for index, item in enumerate(dTerms):
+                linkForEntry = item.a['href']
+                #get current term of search result
+                termStringBuilder = []
+                for contentItem in item.a.contents:
+                    if contentItem.name != 'sup' and contentItem.string is not None:
+                        termStringBuilder.append(contentItem.string)
+                entireTerm = "".join(termStringBuilder)
+                if wordIsAcronym is True:
+                    #in the case search word is all caps/acronym,
+                    #we're only looking for exact match, only allowing class 3
+                    noSEntireTerm = entireTerm.replace(" ","")
+                    if noSEntireTerm == noSSearchWord:
+                        matchNum, defToReturn = findMatchingDef(linkForEntry, definitionToMatch)
+                        if matchNum == 3:
+                            classNum = 3
+                            checkBool = False
+                            currMatchNum = matchNum
+                            termToInput = entireTerm
+                            defToInput = defToReturn
+                            return classNum, checkBool, termToInput, defToInput
+                        elif matchNum > currMatchNum:
+                            classNum = 3
+                            checkBool = True
+                            currMatchNum = matchNum
+                            termToInput = entireTerm
+                            defToInput = defToReturn
+                        #then call match
+                else:
+                    lowerEntireTerm = entireTerm.lower()
+                    noHLowerEntireTerm = lowerEntireTerm.replace("-", " ")
+                    noHSLowerEntireTerm = noHLowerEntireTerm.replace(" ", "")
+                    entireTermParts = lowerEntireTerm.split(" ")
+                    if noHSSearchWord == noHSLowerEntireTerm:
+                        matchNum, defToReturn = findMatchingDef(linkForEntry, definitionToMatch)
+                        if matchNum == 3:
+                            classNum = 3
+                            checkBool = False
+                            currMatchNum = matchNum
+                            termToInput = entireTerm
+                            defToInput = defToReturn
+                            return classNum, checkBool, termToInput, defToInput
+                        elif matchNum >= 0 and (classNum < 3 or matchNum > currMatchNum):
+                            classNum = 3
+                            checkBool = True
+                            currMatchNum = matchNum
+                            termToInput = entireTerm
+                            defToInput = defToReturn
+                        elif (defToInput is None or len(defToInput) == 0) and matchNum >= 0 and defToReturn is not None and len(defToReturn) > 0:
+                            classNum = 3
+                            checkBool = True
+                            currMatchNum = matchNum
+                            termToInput = entireTerm
+                            defToInput = defToReturn
+                    if classNum <= 2:
+                        if noHSSearchWord in noHSLowerEntireTerm:
+                            matchNum, defToReturn = findMatchingDef(linkForEntry, definitionToMatch)
+                            if matchNum >= 0 and (classNum < 2 or matchNum > currMatchNum):
+                                classNum = 2
+                                checkBool = True
+                                currMatchNum = matchNum
+                                termToInput = entireTerm
+                                defToInput = defToReturn
+                            elif (defToInput is None or len(defToInput) == 0) and matchNum >= 0 and defToReturn is not None and len(defToReturn) > 0:
+                                classNum = 2
+                                checkBool = True
+                                currMatchNum = matchNum
+                                termToInput = entireTerm
+                                defToInput = defToReturn
+                    if classNum <= 1:
+                        if containsParts(searchParts, entireTermParts, 0, 0):
+                            matchNum, defToReturn = findMatchingDef(linkForEntry, definitionToMatch)
+                            if matchNum >= 0 and (classNum < 1 or matchNum > currMatchNum):
+                                classNum = 1
+                                checkBool = True
+                                currMatchNum = matchNum
+                                termToInput = entireTerm
+                                defToInput = defToReturn
+                            elif (defToInput is None or len(defToInput) == 0) and matchNum >= 0 and defToReturn is not None and len(defToReturn) > 0:
+                                classNum = 1
+                                checkBool = True
+                                currMatchNum = matchNum
+                                termToInput = entireTerm
+                                defToInput = defToReturn
+        except:
+            break
+        current_page_num += 1
+    return classNum, checkBool, termToInput, defToInput
+def findMatchingDef(link, defToMatch):
+    #returns an int that signifies how the def matches
+    #               -1: ERROR
+    #               0: does not match in whatever way, just returning first def
+    #               1: if it contains all parts of def separately
+    #               2: if it contains def
+    #               3: if it is exact match to def
+    #returns the actual definition found
+    matchNumber = -sys.maxint - 1
+    defToReturn = None
+    try:
+        quote_page = "".join(['https://endic.naver.com', link])
+        page = urllib2.urlopen(quote_page)
+        page_decoded = page.read().decode('utf-8', 'ignore')
+        soup = BeautifulSoup(page_decoded, 'html.parser')
+    except:
+        print("Error with entry page at: " + quote_page)
+        return -1,None
+    listsToLookAt = soup.find_all("dl", class_ = "list_a3")
+    try:
+        uDefToMatch = unicode(defToMatch, "utf-8")
+        noSDefToMatch = uDefToMatch.replace(" ", "")
+        defToMatchParts = uDefToMatch.split(" ")
+    except TypeError:
+        noSDefToMatch = defToMatch.replace(" ", "")
+        defToMatchParts = defToMatch.split(" ")
+    ##prepping def
+    for list in listsToLookAt:
+        for currDef in list.find_all("span", class_="fnt_k06"):
+            defStringBuilder = []
+            for contentItem in currDef.contents:
+                if contentItem.string is not None:
+                    defStringBuilder.append(contentItem.string)
+                else:
+                    defStringBuilder.append("")
+            finalCurrDef = "".join(defStringBuilder)
+            noSFinalCurrDef = finalCurrDef.replace(" ","")
+            finalCurrDefParts = finalCurrDef.split(" ")
+            if noSDefToMatch == noSFinalCurrDef:
+                matchNumber = 3
+                defToReturn = finalCurrDef
+                return matchNumber, defToReturn
+            if noSDefToMatch in noSFinalCurrDef:
+                matchNumber = 2
+                defToReturn = finalCurrDef
+            elif matchNumber < 2:
+                if containsParts(defToMatchParts, finalCurrDefParts, 0, 0):
+                    matchNumber = 1
+                    defToReturn = finalCurrDef
+            if defToReturn is None or len(defToReturn) == 0:
+                matchNumber = 0
+                defToReturn = finalCurrDef
+    return matchNumber, defToReturn
+
+def containsParts(searchArray, containerArray, searchIndex, containerStartIndex):
+    if searchIndex >= len(searchArray):
+        return True
+    i = containerStartIndex
+    found = False
+    while i < len(containerArray):
+        if searchArray[searchIndex] in containerArray[i]:
+            found = True
+            break
+        i += 1
+    return found and containsParts(searchArray,containerArray, searchIndex+1, i + 1)
+def inspectFile():
+    ##open fileName
+    cwd = os.getcwd()
+    os.chdir(fileAddress)
+    dfs = pd.read_excel(fileName, sheet_name="Sheet1", usecols="A:R", encoding='utf-8')
+    numToSubtract = -1
+    repeated = None
+    if dfs.columns[1] == unicode("중복", "utf-8"):
+        numToSubtract = 0
+        repeated =dfs.columns[1]
+    dfs.insert(2 + numToSubtract, unicode("분류", "utf-8"), "")
+    dfs.insert(3 + numToSubtract, unicode("검토필요", "utf-8"), "")
+    dfs.insert(5 + numToSubtract, unicode("표제어", "utf-8"), "")
+    dfs.insert(7 + numToSubtract, unicode("뜻풀이", "utf-8"), "")
+    dfs.insert(8 + numToSubtract, unicode("본말", "utf-8"), "")
+    dfs.insert(9 + numToSubtract, unicode("비고", "utf-8"), "")
+
+    category = dfs.columns[2 + numToSubtract]
+    needCheck = dfs.columns[3 + numToSubtract]
+    english_name = dfs.columns[4 + numToSubtract]
+    marked_name = dfs.columns[5 + numToSubtract]
+    korean_name = dfs.columns[6 + numToSubtract]
+    defInput = dfs.columns[7 + numToSubtract]
+    print(dfs.columns)
+    for index, row in dfs.iterrows():
+        if repeated is None or row[repeated] == unicode("중복아님", "utf-8"):
+             try:
+                 classNum, checkBool, termToInput, defToInput = search(row[english_name], row[korean_name])
+                 if classNum > 0:
+                     dfs.loc[index,category] = classNum
+                     dfs.loc[index,needCheck] = checkBool
+                     dfs.loc[index,marked_name] = termToInput
+                     dfs.loc[index,defInput] = defToInput
+                 elif classNum == 0:
+                     dfs.loc[index,category] = classNum
+                     dfs.loc[index,needCheck] = checkBool
+             except UnicodeEncodeError:
+                 print row[english_name] + unicode("의 한국명에 변환할 수없는 character가 있습니다.", "utf-8")
+        else:
+            dfs.loc[index,category] = 3
+            dfs.loc[index,needCheck] = False
+    # Specify a writer
+    writer = pd.ExcelWriter("edited_" + fileName, engine='xlsxwriter')
+    # Write your DataFrame to a file
+    dfs.to_excel(writer, 'Sheet1', index=False)
+    # Save the result
+    writer.save()
+    ##make data construct
+
+if __name__ == '__main__':
+    if len(sys.argv) < 2:
+        print("Make sure to input name of file to inspect and if necessary, its location (default is C:/Users/USER/Documents/All Work/New Words)")
+        sys.exit(0)
+    fileName = sys.argv[1]
+    if len(sys.argv) > 2:
+        fileAddress = sys.argv[2]
+    inspectFile()
