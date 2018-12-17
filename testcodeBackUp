@@ -1,0 +1,102 @@
+# -*- encoding: utf-8 -*-
+
+import urllib2
+from bs4 import BeautifulSoup
+import sys
+import os
+import pandas as pd
+
+fileAddress = 'C:\Users\USER\Documents\All Work\New Words'
+fileName = ''
+def search(wordToSearch):
+    quote_page = "".join(['https://endic.naver.com/search.nhn?sLn=en&searchOption=entry_idiom&query=', wordToSearch])
+    searchPageCount = 1
+    current_page_num = 1
+    found = False
+    dActualTerms = []
+    dActualDefs = []
+    while (found is False and current_page_num <= searchPageCount):
+        if current_page_num > 1:
+            quote_page = "".join([quote_page, '&theme=&pageNo=', current_page_num])
+        page = urllib2.urlopen(quote_page)
+        page_decoded = page.read().decode('utf-8', 'ignore')
+        soup = BeautifulSoup(page_decoded, 'html.parser')
+        #getting words/idioms section
+        if current_page_num == 1:
+            # # TODO: get page number
+        listToLookAt = soup.find_all("dl", class_ = "list_e2 mar_left")
+        if len(listToLookAt) == 0:
+            print "Couldn't find anything"
+            return [],[]
+        ##extracting terms
+        dTerms = listToLookAt[0].find_all("dt")
+        for index, item in enumerate(dTerms):
+            termStringBuilder = []
+            for contentItem in item.a.contents:
+                if contentItem.string is not None:
+                    termStringBuilder.append(contentItem.string)
+            dActualTerms.append("".join(termStringBuilder))
+        ###extracting definitions
+        dDefs = listToLookAt[0].find_all("span", class_ = "fnt_k05")
+        for index, item in enumerate(dDefs):
+            defStringBuilder = []
+            for contentItem in item.contents:
+                if contentItem.string is not None:
+                    defStringBuilder.append(contentItem.string)
+                else:
+                    defStringBuilder.append("")
+            dActualDefs.append("".join(defStringBuilder))
+        current_page_num += 1
+    return dActualTerms, dActualDefs
+
+def printSearch(wordToSearch):
+    dActualTerms, dActualDefs = search(wordToSearch)
+    for index, item in enumerate(dActualTerms):
+        wholeDefBuilder = [item, " - ", dActualDefs[index]]
+        print str(index + 1) + ": " + "".join(wholeDefBuilder)
+def inspectFile():
+    ##open fileName
+    cwd = os.getcwd()
+    os.chdir(fileAddress)
+
+    dfs = pd.read_excel(fileName, sheet_name="Sheet1", usecols="A:R", encoding='utf-8')
+    english_name = dfs.columns[4]
+    korean_name = dfs.columns[6]
+    print(dfs.columns)
+    for index, row in dfs.iterrows():
+        try:
+            print row[korean_name].replace(" ", "")
+            printSearch(row[english_name].replace(" ", "+"))
+        except UnicodeEncodeError:
+            print row[english_name] + unicode("의 한국명에 변환할 수없는 character가 있습니다.", "utf-8")
+    # Specify a writer
+    #writer = pd.ExcelWriter('example.xlsx', engine='xlsxwriter')
+
+    # Write your DataFrame to a file
+    #df1.to_excel(writer, 'Sheet1')
+
+    # Save the result
+    #writer.save()
+    ##make data construct
+
+if __name__ == '__main__':
+    if sys.argv < 2:
+        print("Please enter in following format: python testCode.py [number for type of command (0 for inspecting file or 1 for searching word)] [0:file name | 1: word] [0:file Location]")
+        sys.exit(0)
+    commandType = int(sys.argv[1])
+    if commandType == 0:
+        if len(sys.argv) < 3:
+            print("If you want to inspect file (command 0), make sure to input name of file to inspect and if necessary, its location (default is C:\Users\USER\Documents)")
+            sys.exit(0)
+        fileName = sys.argv[2]
+        if len(sys.argv) > 3:
+            fileAddress = sys.argv[3]
+        inspectFile()
+    elif commandType == 1:
+        if len(sys.argv) < 3:
+            print("If you want to search for word (command 1), make sure to input word to search")
+            sys.exit(0)
+        printSearch(sys.argv[2])
+    else:
+        print("You used none of the entered commands (0, 1), making the program do nothing")
+        sys.exit(0)
